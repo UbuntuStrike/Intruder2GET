@@ -15,15 +15,12 @@ from javax.swing.event import DocumentListener
 from javax.swing.text import DefaultHighlighter
 import threading
 
-
 class SearchDocumentListener(DocumentListener):
     def __init__(self, callback):
         self.callback = callback
-
     def insertUpdate(self, event): self.callback(event)
     def removeUpdate(self, event): self.callback(event)
     def changedUpdate(self, event): self.callback(event)
-
 
 class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
@@ -35,11 +32,15 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._callbacks.setExtensionName("Intruder2GET")
         self._callbacks.registerContextMenuFactory(self)
 
+        self._mainPanel = JPanel(BorderLayout())  # Ensure it's created before init
+        self.initExtension()
+        self._callbacks.addSuiteTab(self)  # Ensure tab is registered
+
+    def initExtension(self):
         self.selectedMessages = [None, None]
         self.payloads = []
         self.results = []
 
-        self._mainPanel = JPanel(BorderLayout())
         self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size"], 0)
         self.resultTable = JTable(self.tableModel)
         self.resultTable.getSelectionModel().addListSelectionListener(self.rowSelected)
@@ -63,7 +64,6 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             except:
                 pass
 
-        # Pane state holders
         self.request1State = {'req': '', 'resp': '', 'html': False, 'mode': 'request'}
         self.request2State = {'req': '', 'resp': '', 'html': False, 'mode': 'request'}
 
@@ -141,16 +141,22 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._btnPanel = JPanel()
         self._btnPanel.add(JButton("Load Wordlist", actionPerformed=self.loadWordlist))
         self._btnPanel.add(JButton("Start Attack", actionPerformed=self.startAttack))
+        self._btnPanel.add(JButton("Clear", actionPerformed=self.hardReset))
 
         verticalSplit = JSplitPane(JSplitPane.VERTICAL_SPLIT)
         verticalSplit.setTopComponent(JScrollPane(self.resultTable))
         verticalSplit.setBottomComponent(self.bottomSplit)
         verticalSplit.setDividerLocation(200)
 
+        self._mainPanel.removeAll()
         self._mainPanel.add(verticalSplit, BorderLayout.CENTER)
         self._mainPanel.add(self._btnPanel, BorderLayout.SOUTH)
+        self._mainPanel.revalidate()
+        self._mainPanel.repaint()
 
-        self._callbacks.addSuiteTab(self)
+    def hardReset(self, event):
+        self._callbacks.printOutput("Hard reset: Reloading extension UI.")
+        self.initExtension()
 
     def wrapHtml(self, body):
         return "<html><head><meta charset='UTF-8'></head><body>" + body + "</body></html>"
@@ -216,33 +222,14 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         if not event.getValueIsAdjusting():
             index = self.resultTable.getSelectedRow()
             if 0 <= index < len(self.results):
+                if None in self.selectedMessages:
+                    return
+
                 _, req1, resp1, req2, resp2 = self.results[index]
                 self.request1State['req'] = req1
                 self.request1State['resp'] = resp1
                 self.request2State['req'] = req2
                 self.request2State['resp'] = resp2
 
-                # Sync radio buttons with saved mode
-                if self.request1State['mode'] == 'request':
-                    self.req1RadioReq.setSelected(True)
-                else:
-                    self.req1RadioResp.setSelected(True)
-
-                if self.request2State['mode'] == 'request':
-                    self.req2RadioReq.setSelected(True)
-                else:
-                    self.req2RadioResp.setSelected(True)
-
-                # Update panes to reflect current mode and content
                 self.request1UpdateView()
                 self.request2UpdateView()
-
-    def updateTextPane(self, state, textPane):
-        mode = state['mode']
-        html = state['html']
-        textPane.setContentType("text/html" if (mode == 'response' and html) else "text/plain")
-        key_map = {'request': 'req', 'response': 'resp'}
-        content = state[key_map.get(mode, 'req')]
-        if mode == 'response' and html:
-            content = self.wrapHtml(content)
-        textPane.setText(content)
