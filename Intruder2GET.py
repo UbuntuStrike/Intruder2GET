@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 
 from burp import IBurpExtender, IContextMenuFactory, ITab
-from java.awt import BorderLayout, Color
+from java.awt import BorderLayout, Color, FlowLayout
 from javax.swing import (
     JPanel, JButton, JFileChooser, JTextField, JLabel,
-    JScrollPane, JMenuItem, JSplitPane, JTable, JTextPane
+    JScrollPane, JMenuItem, JSplitPane, JTable, JTextPane, JCheckBox,
+    JRadioButton, ButtonGroup
 )
 from javax.swing.table import DefaultTableModel
 from javax.swing.border import TitledBorder
@@ -19,14 +20,9 @@ class SearchDocumentListener(DocumentListener):
     def __init__(self, callback):
         self.callback = callback
 
-    def insertUpdate(self, event):
-        self.callback(event)
-
-    def removeUpdate(self, event):
-        self.callback(event)
-
-    def changedUpdate(self, event):
-        self.callback(event)
+    def insertUpdate(self, event): self.callback(event)
+    def removeUpdate(self, event): self.callback(event)
+    def changedUpdate(self, event): self.callback(event)
 
 
 class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
@@ -39,114 +35,113 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._callbacks.setExtensionName("Intruder2GET")
         self._callbacks.registerContextMenuFactory(self)
 
-        self.selectedMessages = [None, None]  # [injectable, static]
+        self.selectedMessages = [None, None]
         self.payloads = []
         self.results = []
 
         self._mainPanel = JPanel(BorderLayout())
-
-        # === Results Table ===
         self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size"], 0)
         self.resultTable = JTable(self.tableModel)
         self.resultTable.getSelectionModel().addListSelectionListener(self.rowSelected)
 
-        # === Highlighter helper ===
         def highlightAllMatches(pane, keyword):
             highlighter = pane.getHighlighter()
             highlighter.removeAllHighlights()
             if not keyword:
                 return
-            doc = pane.getDocument()
             try:
-                text = doc.getText(0, doc.getLength()).lower()
-            except Exception:
-                # fallback if something goes wrong
-                text = pane.getText().lower()
-            keyword = keyword.lower()
-            pos = 0
-            while True:
-                index = text.find(keyword, pos)
-                if index == -1:
-                    break
-                try:
+                text = pane.getDocument().getText(0, pane.getDocument().getLength()).lower()
+                keyword = keyword.lower()
+                pos = 0
+                while True:
+                    index = text.find(keyword, pos)
+                    if index == -1:
+                        break
                     highlighter.addHighlight(index, index + len(keyword),
                         DefaultHighlighter.DefaultHighlightPainter(Color.YELLOW))
-                except:
-                    pass
-                pos = index + len(keyword)
+                    pos = index + len(keyword)
+            except:
+                pass
 
-        # === Request/Response Panels with Search ===
-        self.request1Text = JTextPane()
-        self.request1Text.setEditable(True)
-        self.request1Text.setBorder(TitledBorder("Injectable Request + Response"))
+        # Pane state holders
+        self.request1State = {'req': '', 'resp': '', 'html': False, 'mode': 'request'}
+        self.request2State = {'req': '', 'resp': '', 'html': False, 'mode': 'request'}
 
-        self.request1Search = JTextField(20)
-        self.request1SearchLabel = JLabel("Search:")
-        def searchRequest1(event):
-            highlightAllMatches(self.request1Text, self.request1Search.getText())
-        self.request1Search.getDocument().addDocumentListener(SearchDocumentListener(searchRequest1))
+        def buildPane(state, highlightFunc):
+            textPane = JTextPane()
+            textPane.setEditable(True)
+            textPane.setContentType("text/plain")
 
-        request1Panel = JPanel(BorderLayout())
-        topSearch1 = JPanel()
-        topSearch1.add(self.request1SearchLabel)
-        topSearch1.add(self.request1Search)
-        request1Panel.add(topSearch1, BorderLayout.NORTH)
-        request1Panel.add(JScrollPane(self.request1Text), BorderLayout.CENTER)
+            search = JTextField(20)
+            search.getDocument().addDocumentListener(SearchDocumentListener(lambda e: highlightFunc(textPane, search.getText())))
+            toggle = JCheckBox("Render HTML")
+            toggle.setSelected(False)
+            
+            radioReq = JRadioButton("Request", True)
+            radioResp = JRadioButton("Response")
+            group = ButtonGroup()
+            group.add(radioReq)
+            group.add(radioResp)
 
-        self.request2Text = JTextPane()
-        self.request2Text.setEditable(True)
-        self.request2Text.setBorder(TitledBorder("Static Request + Response"))
+            def updateView():
+                mode = 'request' if radioReq.isSelected() else 'response'
+                state['mode'] = mode
+                state['html'] = toggle.isSelected()
+                textPane.setContentType("text/html" if (mode == 'response' and state['html']) else "text/plain")
+                content = state['req'] if mode == 'request' else state['resp']
+                if mode == 'response' and state['html']:
+                    content = self.wrapHtml(content)
+                textPane.setText(content)
 
-        self.request2Search = JTextField(20)
-        self.request2SearchLabel = JLabel("Search:")
-        def searchRequest2(event):
-            highlightAllMatches(self.request2Text, self.request2Search.getText())
-        self.request2Search.getDocument().addDocumentListener(SearchDocumentListener(searchRequest2))
+            toggle.addActionListener(lambda e: updateView())
+            radioReq.addActionListener(lambda e: updateView())
+            radioResp.addActionListener(lambda e: updateView())
 
-        request2Panel = JPanel(BorderLayout())
-        topSearch2 = JPanel()
-        topSearch2.add(self.request2SearchLabel)
-        topSearch2.add(self.request2Search)
-        request2Panel.add(topSearch2, BorderLayout.NORTH)
-        request2Panel.add(JScrollPane(self.request2Text), BorderLayout.CENTER)
+            searchPanel = JPanel(FlowLayout(FlowLayout.LEFT))
+            searchPanel.add(JLabel("Search:"))
+            searchPanel.add(search)
+            searchPanel.add(toggle)
+            searchPanel.add(radioReq)
+            searchPanel.add(radioResp)
+
+            container = JPanel(BorderLayout())
+            container.add(searchPanel, BorderLayout.NORTH)
+            container.add(JScrollPane(textPane), BorderLayout.CENTER)
+
+            return container, textPane, toggle, radioReq, radioResp, updateView
+
+        panel1, self.request1Text, self.req1Toggle, self.req1RadioReq, self.req1RadioResp, self.request1UpdateView = buildPane(self.request1State, highlightAllMatches)
+        panel2, self.request2Text, self.req2Toggle, self.req2RadioReq, self.req2RadioResp, self.request2UpdateView = buildPane(self.request2State, highlightAllMatches)
 
         self.bottomSplit = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
-        self.bottomSplit.setLeftComponent(request1Panel)
-        self.bottomSplit.setRightComponent(request2Panel)
+        self.bottomSplit.setLeftComponent(panel1)
+        self.bottomSplit.setRightComponent(panel2)
         self.bottomSplit.setDividerLocation(500)
 
-        # === Right-click to insert %s ===
         def insertPayloadAction(event):
-            doc = self.request1Text.getStyledDocument()
             pos = self.request1Text.getCaretPosition()
             try:
-                doc.insertString(pos, self.PAYLOAD_PLACEHOLDER, None)
+                self.request1Text.getDocument().insertString(pos, self.PAYLOAD_PLACEHOLDER, None)
             except Exception as e:
-                self._callbacks.printError("Failed to insert payload placeholder: %s" % str(e))
+                self._callbacks.printError("Insert failed: " + str(e))
 
         popupMenu = JPopupMenu()
-        insertPayloadMenuItem = JMenuItem("Insert %s here" % self.PAYLOAD_PLACEHOLDER, actionPerformed=insertPayloadAction)
-        popupMenu.add(insertPayloadMenuItem)
+        popupMenu.add(JMenuItem("Insert %s here" % self.PAYLOAD_PLACEHOLDER, actionPerformed=insertPayloadAction))
 
         class PopupListener(MouseAdapter):
             def mousePressed(self, e):
                 if e.isPopupTrigger():
                     popupMenu.show(e.getComponent(), e.getX(), e.getY())
-
             def mouseReleased(self, e):
                 if e.isPopupTrigger():
                     popupMenu.show(e.getComponent(), e.getX(), e.getY())
 
         self.request1Text.addMouseListener(PopupListener())
 
-        # === Buttons ===
         self._btnPanel = JPanel()
-        self._loadBtn = JButton("Load Wordlist", actionPerformed=self.loadWordlist)
-        self._startBtn = JButton("Start Attack", actionPerformed=self.startAttack)
-        self._btnPanel.add(self._loadBtn)
-        self._btnPanel.add(self._startBtn)
+        self._btnPanel.add(JButton("Load Wordlist", actionPerformed=self.loadWordlist))
+        self._btnPanel.add(JButton("Start Attack", actionPerformed=self.startAttack))
 
-        # === Layout using JSplitPane ===
         verticalSplit = JSplitPane(JSplitPane.VERTICAL_SPLIT)
         verticalSplit.setTopComponent(JScrollPane(self.resultTable))
         verticalSplit.setBottomComponent(self.bottomSplit)
@@ -157,50 +152,40 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
         self._callbacks.addSuiteTab(self)
 
-    def getTabCaption(self):
-        return "Intruder2GET"
+    def wrapHtml(self, body):
+        return "<html><head><meta charset='UTF-8'></head><body>" + body + "</body></html>"
 
-    def getUiComponent(self):
-        return self._mainPanel
+    def getTabCaption(self): return "Intruder2GET"
+    def getUiComponent(self): return self._mainPanel
 
     def createMenuItems(self, invocation):
         messages = invocation.getSelectedMessages()
         if messages and len(messages) == 1:
-            menuItem = JMenuItem("Send to Intruder2GET", actionPerformed=lambda x: self.setRequest(messages[0]))
-            return [menuItem]
+            return [JMenuItem("Send to Intruder2GET", actionPerformed=lambda x: self.setRequest(messages[0]))]
         return []
 
     def setRequest(self, message):
         if self.selectedMessages[0] is None:
             self.selectedMessages[0] = message
-            self._callbacks.printOutput("Injectable request set.")
             self.request1Text.setText(self._helpers.bytesToString(message.getRequest()))
         else:
             self.selectedMessages[1] = message
-            self._callbacks.printOutput("Static request set.")
             self.request2Text.setText(self._helpers.bytesToString(message.getRequest()))
+        self._callbacks.printOutput("Request set.")
 
     def loadWordlist(self, event):
         chooser = JFileChooser()
-        result = chooser.showOpenDialog(None)
-        if result == JFileChooser.APPROVE_OPTION:
-            path = chooser.getSelectedFile().getAbsolutePath()
-            self.payloads = []
-            with open(path, 'r') as f:
-                for line in f:
-                    payload = line.strip()
-                    if payload:
-                        self.payloads.append(payload)
+        if chooser.showOpenDialog(None) == JFileChooser.APPROVE_OPTION:
+            with open(chooser.getSelectedFile().getAbsolutePath()) as f:
+                self.payloads = [line.strip() for line in f if line.strip()]
             self._callbacks.printOutput("Loaded %d payloads." % len(self.payloads))
 
     def startAttack(self, event):
-        thread = threading.Thread(target=self.runAttack)
-        thread.start()
+        threading.Thread(target=self.runAttack).start()
 
     def runAttack(self):
         self.tableModel.setRowCount(0)
         self.results = []
-
         if None in self.selectedMessages or not self.payloads:
             self._callbacks.printOutput("Load both requests and payloads first.")
             return
@@ -209,24 +194,21 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         request2 = self.request2Text.getText()
 
         if self.PAYLOAD_PLACEHOLDER not in baseStr1:
-            self._callbacks.printOutput("No '%s' placeholder found in injectable request." % self.PAYLOAD_PLACEHOLDER)
+            self._callbacks.printOutput("No '%s' placeholder found." % self.PAYLOAD_PLACEHOLDER)
             return
 
         for i, payload in enumerate(self.payloads):
             req1 = baseStr1.replace(self.PAYLOAD_PLACEHOLDER, payload)
-            byteRequest1 = self._helpers.stringToBytes(req1)
-            response1 = self._callbacks.makeHttpRequest(self.selectedMessages[0].getHttpService(), byteRequest1)
-            respStr1 = self._helpers.bytesToString(response1.getResponse())
+            respStr1 = self._helpers.bytesToString(
+                self._callbacks.makeHttpRequest(self.selectedMessages[0].getHttpService(),
+                                                self._helpers.stringToBytes(req1)).getResponse())
 
-            byteRequest2 = self._helpers.stringToBytes(request2)
-            response2 = self._callbacks.makeHttpRequest(self.selectedMessages[1].getHttpService(), byteRequest2)
-            respStr2 = self._helpers.bytesToString(response2.getResponse())
-
-            r1_len = len(respStr1)
-            r2_len = len(respStr2)
+            respStr2 = self._helpers.bytesToString(
+                self._callbacks.makeHttpRequest(self.selectedMessages[1].getHttpService(),
+                                                self._helpers.stringToBytes(request2)).getResponse())
 
             self.results.append((payload, req1, respStr1, request2, respStr2))
-            self.tableModel.addRow([i + 1, payload, r1_len, r2_len])
+            self.tableModel.addRow([i + 1, payload, len(respStr1), len(respStr2)])
 
         self._callbacks.printOutput("Attack completed. %d payloads sent." % len(self.payloads))
 
@@ -234,6 +216,33 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         if not event.getValueIsAdjusting():
             index = self.resultTable.getSelectedRow()
             if 0 <= index < len(self.results):
-                payload, req1, resp1, req2, resp2 = self.results[index]
-                self.request1Text.setText(req1 + "\n\n--- Response ---\n" + resp1)
-                self.request2Text.setText(req2 + "\n\n--- Response ---\n" + resp2)
+                _, req1, resp1, req2, resp2 = self.results[index]
+                self.request1State['req'] = req1
+                self.request1State['resp'] = resp1
+                self.request2State['req'] = req2
+                self.request2State['resp'] = resp2
+
+                # Sync radio buttons with saved mode
+                if self.request1State['mode'] == 'request':
+                    self.req1RadioReq.setSelected(True)
+                else:
+                    self.req1RadioResp.setSelected(True)
+
+                if self.request2State['mode'] == 'request':
+                    self.req2RadioReq.setSelected(True)
+                else:
+                    self.req2RadioResp.setSelected(True)
+
+                # Update panes to reflect current mode and content
+                self.request1UpdateView()
+                self.request2UpdateView()
+
+    def updateTextPane(self, state, textPane):
+        mode = state['mode']
+        html = state['html']
+        textPane.setContentType("text/html" if (mode == 'response' and html) else "text/plain")
+        key_map = {'request': 'req', 'response': 'resp'}
+        content = state[key_map.get(mode, 'req')]
+        if mode == 'response' and html:
+            content = self.wrapHtml(content)
+        textPane.setText(content)
