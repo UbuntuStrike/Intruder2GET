@@ -36,7 +36,7 @@ This is common in:
 
     In Proxy > HTTP History, select two requests:
 
-        The first must contain §payload§ placeholders.
+        The first must contain payload placeholders '%s' which can be added in the left side dialogue box in the extension by right clicking.
 
         The second is triggered after each injected request.
 
