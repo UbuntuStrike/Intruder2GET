@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from burp import IBurpExtender, IContextMenuFactory, ITab
 from java.awt import BorderLayout
 from java.io import BufferedReader, FileReader
@@ -15,7 +17,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
     def registerExtenderCallbacks(self, callbacks):
         self._callbacks = callbacks
         self._helpers = callbacks.getHelpers()
-        self._callbacks.setExtensionName("Intruder2GET")  # ✅ Extension name updated
+        self._callbacks.setExtensionName("Intruder2GET")
         self._callbacks.registerContextMenuFactory(self)
 
         self.selectedMessages = []
@@ -59,7 +61,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._callbacks.addSuiteTab(self)
 
     def getTabCaption(self):
-        return "Intruder2GET"  # ✅ Tab caption updated
+        return "Intruder2GET"
 
     def getUiComponent(self):
         return self._mainPanel
@@ -96,7 +98,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                     payload = line.strip()
                     if payload:
                         self.payloads.append(payload)
-            self._textArea.append(f"Loaded {len(self.payloads)} payloads.\n")
+            self._textArea.append("Loaded {} payloads.\n".format(len(self.payloads)))
 
     def startAttack(self, event):
         thread = threading.Thread(target=self.runAttack)
@@ -131,8 +133,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             response2 = self._callbacks.makeHttpRequest(self.selectedMessages[1].getHttpService(), byteRequest2)
             respStr2 = self._helpers.bytesToString(response2.getResponse())
 
-            log = f"[{i+1}/{len(self.payloads)}] Payload: {payload}\n"
-            log += f"Response1 Length: {len(respStr1)} | Response2 Length: {len(respStr2)}\n\n"
+            log = "[{}/{}] Payload: {}\n".format(i + 1, len(self.payloads), payload)
+            log += "Response1 Length: {} | Response2 Length: {}\n\n".format(len(respStr1), len(respStr2))
             self._textArea.append(log)
 
         self._textArea.append("Attack completed.\n")
