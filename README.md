@@ -1,3 +1,4 @@
+##### Still Debugging, Not 100% working atm ##################
 🔍 Intruder2GET — Burp Suite Extension
 
 Intruder2GET is a Burp Suite extension designed for advanced fuzzing workflows where a payload injected into one request influences the behavior or output of a different page or request.
