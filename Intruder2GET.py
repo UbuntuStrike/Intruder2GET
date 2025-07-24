@@ -8,7 +8,6 @@ from javax.swing import (
     JRadioButton, ButtonGroup
 )
 from javax.swing.table import DefaultTableModel
-from javax.swing.border import TitledBorder
 from java.awt.event import MouseAdapter
 from javax.swing import JPopupMenu
 from javax.swing.event import DocumentListener
@@ -32,11 +31,11 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._callbacks.setExtensionName("Intruder2GET")
         self._callbacks.registerContextMenuFactory(self)
 
-        self._mainPanel = JPanel(BorderLayout())  # Ensure it's created before init
-        self.initExtension()
-        self._callbacks.addSuiteTab(self)  # Ensure tab is registered
+        self._mainPanel = JPanel(BorderLayout())
+        self.initUI()
+        self._callbacks.addSuiteTab(self)
 
-    def initExtension(self):
+    def initUI(self):
         self.selectedMessages = [None, None]
         self.payloads = []
         self.results = []
@@ -76,7 +75,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             search.getDocument().addDocumentListener(SearchDocumentListener(lambda e: highlightFunc(textPane, search.getText())))
             toggle = JCheckBox("Render HTML")
             toggle.setSelected(False)
-            
+
             radioReq = JRadioButton("Request", True)
             radioResp = JRadioButton("Response")
             group = ButtonGroup()
@@ -141,7 +140,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._btnPanel = JPanel()
         self._btnPanel.add(JButton("Load Wordlist", actionPerformed=self.loadWordlist))
         self._btnPanel.add(JButton("Start Attack", actionPerformed=self.startAttack))
-        self._btnPanel.add(JButton("Clear", actionPerformed=self.hardReset))
+        self._btnPanel.add(JButton("Clear", actionPerformed=self.clearAll))
 
         verticalSplit = JSplitPane(JSplitPane.VERTICAL_SPLIT)
         verticalSplit.setTopComponent(JScrollPane(self.resultTable))
@@ -154,9 +153,18 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._mainPanel.revalidate()
         self._mainPanel.repaint()
 
-    def hardReset(self, event):
-        self._callbacks.printOutput("Hard reset: Reloading extension UI.")
-        self.initExtension()
+    def clearAll(self, event):
+        self._callbacks.printOutput("Reloading Intruder2GET UI and state...")
+        self._mainPanel.removeAll()
+        self.selectedMessages = [None, None]
+        self.payloads = []
+        self.results = []
+        self.request1State = {'req': '', 'resp': '', 'html': False, 'mode': 'request'}
+        self.request2State = {'req': '', 'resp': '', 'html': False, 'mode': 'request'}
+        self.tableModel.setRowCount(0)
+        self.initUI()
+        self._mainPanel.revalidate()
+        self._mainPanel.repaint()
 
     def wrapHtml(self, body):
         return "<html><head><meta charset='UTF-8'></head><body>" + body + "</body></html>"
@@ -224,12 +232,10 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             if 0 <= index < len(self.results):
                 if None in self.selectedMessages:
                     return
-
                 _, req1, resp1, req2, resp2 = self.results[index]
                 self.request1State['req'] = req1
                 self.request1State['resp'] = resp1
                 self.request2State['req'] = req2
                 self.request2State['resp'] = resp2
-
                 self.request1UpdateView()
                 self.request2UpdateView()
