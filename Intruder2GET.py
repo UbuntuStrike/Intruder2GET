@@ -10,7 +10,7 @@ from javax.swing import (
 from javax.swing.table import DefaultTableModel
 from java.awt.event import MouseAdapter
 from javax.swing import JPopupMenu
-from javax.swing.event import DocumentListener
+from javax.swing.event import DocumentListener, ListSelectionListener
 from javax.swing.text import DefaultHighlighter
 from java.io import File
 import threading
@@ -23,6 +23,14 @@ class SearchDocumentListener(DocumentListener):
     def insertUpdate(self, event): self.callback(event)
     def removeUpdate(self, event): self.callback(event)
     def changedUpdate(self, event): self.callback(event)
+
+class RowSelectionListener(ListSelectionListener):
+    def __init__(self, outer):
+        self.outer = outer
+
+    def valueChanged(self, event):
+        if not event.getValueIsAdjusting():
+            self.outer.handleRowSelected()
 
 class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
@@ -48,7 +56,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
         self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size", "Time (ms)"], 0)
         self.resultTable = JTable(self.tableModel)
-        self.resultTable.getSelectionModel().addListSelectionListener(self.rowSelected)
+        self.resultTable.getSelectionModel().addListSelectionListener(RowSelectionListener(self))
 
         self.statusLabel = JLabel("Status: Idle")
 
@@ -121,6 +129,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                     self._callbacks.printError("Open in browser failed: " + str(e))
 
             popupMenu = JPopupMenu()
+            popupMenu.add(JMenuItem("Insert %s here" % self.PAYLOAD_PLACEHOLDER, actionPerformed=lambda e: self.insertPayloadAtCaret(textPane)))
             popupMenu.add(JMenuItem("Open in Browser", actionPerformed=lambda e: openInBrowser()))
 
             class PopupListener(MouseAdapter):
@@ -154,26 +163,6 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self.bottomSplit.setRightComponent(panel2)
         self.bottomSplit.setDividerLocation(500)
 
-        def insertPayloadAction(event):
-            pos = self.request1Text.getCaretPosition()
-            try:
-                self.request1Text.getDocument().insertString(pos, self.PAYLOAD_PLACEHOLDER, None)
-            except Exception as e:
-                self._callbacks.printError("Insert failed: " + str(e))
-
-        popupMenu = JPopupMenu()
-        popupMenu.add(JMenuItem("Insert %s here" % self.PAYLOAD_PLACEHOLDER, actionPerformed=insertPayloadAction))
-
-        class PopupListener(MouseAdapter):
-            def mousePressed(self, e):
-                if e.isPopupTrigger():
-                    popupMenu.show(e.getComponent(), e.getX(), e.getY())
-            def mouseReleased(self, e):
-                if e.isPopupTrigger():
-                    popupMenu.show(e.getComponent(), e.getX(), e.getY())
-
-        self.request1Text.addMouseListener(PopupListener())
-
         self._btnPanel = JPanel()
         self._btnPanel.add(JButton("Load Wordlist", actionPerformed=self.loadWordlist))
         self._btnPanel.add(JButton("Start Attack", actionPerformed=self.startAttack))
@@ -191,6 +180,13 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._mainPanel.add(self._btnPanel, BorderLayout.SOUTH)
         self._mainPanel.revalidate()
         self._mainPanel.repaint()
+
+    def insertPayloadAtCaret(self, textPane):
+        try:
+            pos = textPane.getCaretPosition()
+            textPane.getDocument().insertString(pos, self.PAYLOAD_PLACEHOLDER, None)
+        except Exception as e:
+            self._callbacks.printError("Insert failed: " + str(e))
 
     def clearAll(self, event):
         self._callbacks.printOutput("Reloading Intruder2GET UI and state...")
@@ -283,16 +279,15 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             self._callbacks.printOutput("Attack completed. %d payloads sent." % len(self.payloads))
             self.statusLabel.setText("Status: Completed")
 
-    def rowSelected(self, event):
-        if not event.getValueIsAdjusting():
-            index = self.resultTable.getSelectedRow()
-            if 0 <= index < len(self.results):
-                if None in self.selectedMessages:
-                    return
-                _, req1, resp1, req2, resp2 = self.results[index]
-                self.request1State['req'] = req1
-                self.request1State['resp'] = resp1
-                self.request2State['req'] = req2
-                self.request2State['resp'] = resp2
-                self.request1UpdateView()
-                self.request2UpdateView()
+    def handleRowSelected(self):
+        index = self.resultTable.getSelectedRow()
+        if 0 <= index < len(self.results):
+            if None in self.selectedMessages:
+                return
+            _, req1, resp1, req2, resp2 = self.results[index]
+            self.request1State['req'] = req1
+            self.request1State['resp'] = resp1
+            self.request2State['req'] = req2
+            self.request2State['resp'] = resp2
+            self.request1UpdateView()
+            self.request2UpdateView()
