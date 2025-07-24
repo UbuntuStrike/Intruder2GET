@@ -27,6 +27,8 @@ class SearchDocumentListener(DocumentListener):
 class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
     PAYLOAD_PLACEHOLDER = "%s"
+    def __init__(self):
+        self.stopFlag = False
 
     def registerExtenderCallbacks(self, callbacks):
         self._callbacks = callbacks
@@ -42,10 +44,13 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self.selectedMessages = [None, None]
         self.payloads = []
         self.results = []
+        self.stopFlag = False
 
-        self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size", "R1 Time (ms)", "R2 Time (ms)"], 0)
+        self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size", "Time (ms)"], 0)
         self.resultTable = JTable(self.tableModel)
         self.resultTable.getSelectionModel().addListSelectionListener(self.rowSelected)
+
+        self.statusLabel = JLabel("Status: Idle")
 
         def highlightAllMatches(pane, keyword):
             highlighter = pane.getHighlighter()
@@ -172,7 +177,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._btnPanel = JPanel()
         self._btnPanel.add(JButton("Load Wordlist", actionPerformed=self.loadWordlist))
         self._btnPanel.add(JButton("Start Attack", actionPerformed=self.startAttack))
+        self._btnPanel.add(JButton("Stop", actionPerformed=self.stopAttack))
         self._btnPanel.add(JButton("Clear", actionPerformed=self.clearAll))
+        self._btnPanel.add(self.statusLabel)
 
         verticalSplit = JSplitPane(JSplitPane.VERTICAL_SPLIT)
         verticalSplit.setTopComponent(JScrollPane(self.resultTable))
@@ -194,6 +201,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self.request1State = {'req': '', 'resp': '', 'html': False, 'mode': 'request'}
         self.request2State = {'req': '', 'resp': '', 'html': False, 'mode': 'request'}
         self.tableModel.setRowCount(0)
+        self.stopFlag = False
         self.initUI()
         self._mainPanel.revalidate()
         self._mainPanel.repaint()
@@ -227,13 +235,21 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             self._callbacks.printOutput("Loaded %d payloads." % len(self.payloads))
 
     def startAttack(self, event):
+        self.stopFlag = False
+        self.statusLabel.setText("Status: Running...")
         threading.Thread(target=self.runAttack).start()
+
+    def stopAttack(self, event):
+        self._callbacks.printOutput("Attack stop requested.")
+        self.statusLabel.setText("Status: Stopping...")
+        self.stopFlag = True
 
     def runAttack(self):
         self.tableModel.setRowCount(0)
         self.results = []
         if None in self.selectedMessages or not self.payloads:
             self._callbacks.printOutput("Load both requests and payloads first.")
+            self.statusLabel.setText("Status: Idle")
             return
 
         baseStr1 = self.request1Text.getText()
@@ -241,35 +257,31 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
         if self.PAYLOAD_PLACEHOLDER not in baseStr1:
             self._callbacks.printOutput("No '%s' placeholder found." % self.PAYLOAD_PLACEHOLDER)
+            self.statusLabel.setText("Status: Idle")
             return
 
         for i, payload in enumerate(self.payloads):
+            if self.stopFlag:
+                self._callbacks.printOutput("Attack stopped after %d payloads." % i)
+                self.statusLabel.setText("Status: Stopped")
+                break
             req1 = baseStr1.replace(self.PAYLOAD_PLACEHOLDER, payload)
-
-            start1 = time.time()
+            start = time.time()
             respStr1 = self._helpers.bytesToString(
-                self._callbacks.makeHttpRequest(
-                    self.selectedMessages[0].getHttpService(),
-                    self._helpers.stringToBytes(req1)
-                ).getResponse()
-            )
-            end1 = time.time()
-            r1_time = int((end1 - start1) * 1000)
+                self._callbacks.makeHttpRequest(self.selectedMessages[0].getHttpService(),
+                                                self._helpers.stringToBytes(req1)).getResponse())
 
-            start2 = time.time()
             respStr2 = self._helpers.bytesToString(
-                self._callbacks.makeHttpRequest(
-                    self.selectedMessages[1].getHttpService(),
-                    self._helpers.stringToBytes(request2)
-                ).getResponse()
-            )
-            end2 = time.time()
-            r2_time = int((end2 - start2) * 1000)
+                self._callbacks.makeHttpRequest(self.selectedMessages[1].getHttpService(),
+                                                self._helpers.stringToBytes(request2)).getResponse())
+            elapsed = int((time.time() - start) * 1000)
 
             self.results.append((payload, req1, respStr1, request2, respStr2))
-            self.tableModel.addRow([i + 1, payload, len(respStr1), len(respStr2), r1_time, r2_time])
+            self.tableModel.addRow([i + 1, payload, len(respStr1), len(respStr2), elapsed])
 
-        self._callbacks.printOutput("Attack completed. %d payloads sent." % len(self.payloads))
+        if not self.stopFlag:
+            self._callbacks.printOutput("Attack completed. %d payloads sent." % len(self.payloads))
+            self.statusLabel.setText("Status: Completed")
 
     def rowSelected(self, event):
         if not event.getValueIsAdjusting():
