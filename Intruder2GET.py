@@ -15,6 +15,7 @@ from javax.swing.text import DefaultHighlighter
 from java.io import File
 import threading
 import tempfile
+import time
 
 class SearchDocumentListener(DocumentListener):
     def __init__(self, callback):
@@ -42,7 +43,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self.payloads = []
         self.results = []
 
-        self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size"], 0)
+        self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size", "R1 Time (ms)", "R2 Time (ms)"], 0)
         self.resultTable = JTable(self.tableModel)
         self.resultTable.getSelectionModel().addListSelectionListener(self.rowSelected)
 
@@ -244,16 +245,29 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
         for i, payload in enumerate(self.payloads):
             req1 = baseStr1.replace(self.PAYLOAD_PLACEHOLDER, payload)
-            respStr1 = self._helpers.bytesToString(
-                self._callbacks.makeHttpRequest(self.selectedMessages[0].getHttpService(),
-                                                self._helpers.stringToBytes(req1)).getResponse())
 
+            start1 = time.time()
+            respStr1 = self._helpers.bytesToString(
+                self._callbacks.makeHttpRequest(
+                    self.selectedMessages[0].getHttpService(),
+                    self._helpers.stringToBytes(req1)
+                ).getResponse()
+            )
+            end1 = time.time()
+            r1_time = int((end1 - start1) * 1000)
+
+            start2 = time.time()
             respStr2 = self._helpers.bytesToString(
-                self._callbacks.makeHttpRequest(self.selectedMessages[1].getHttpService(),
-                                                self._helpers.stringToBytes(request2)).getResponse())
+                self._callbacks.makeHttpRequest(
+                    self.selectedMessages[1].getHttpService(),
+                    self._helpers.stringToBytes(request2)
+                ).getResponse()
+            )
+            end2 = time.time()
+            r2_time = int((end2 - start2) * 1000)
 
             self.results.append((payload, req1, respStr1, request2, respStr2))
-            self.tableModel.addRow([i + 1, payload, len(respStr1), len(respStr2)])
+            self.tableModel.addRow([i + 1, payload, len(respStr1), len(respStr2), r1_time, r2_time])
 
         self._callbacks.printOutput("Attack completed. %d payloads sent." % len(self.payloads))
 
