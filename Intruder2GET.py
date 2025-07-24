@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from burp import IBurpExtender, IContextMenuFactory, ITab
-from java.awt import BorderLayout, Color, FlowLayout
+from java.awt import BorderLayout, Color, FlowLayout, Desktop
 from javax.swing import (
     JPanel, JButton, JFileChooser, JTextField, JLabel,
     JScrollPane, JMenuItem, JSplitPane, JTable, JTextPane, JCheckBox,
@@ -12,8 +12,9 @@ from java.awt.event import MouseAdapter
 from javax.swing import JPopupMenu
 from javax.swing.event import DocumentListener
 from javax.swing.text import DefaultHighlighter
+from java.io import File
 import threading
-import time
+import tempfile
 
 class SearchDocumentListener(DocumentListener):
     def __init__(self, callback):
@@ -41,7 +42,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self.payloads = []
         self.results = []
 
-        self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size", "R1 Time (ms)", "R2 Time (ms)"], 0)
+        self.tableModel = DefaultTableModel(["#", "Payload", "R1 Size", "R2 Size"], 0)
         self.resultTable = JTable(self.tableModel)
         self.resultTable.getSelectionModel().addListSelectionListener(self.rowSelected)
 
@@ -96,6 +97,35 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             toggle.addActionListener(lambda e: updateView())
             radioReq.addActionListener(lambda e: updateView())
             radioResp.addActionListener(lambda e: updateView())
+
+            def openInBrowser():
+                try:
+                    content = state['resp'] if state['mode'] == 'response' else state['req']
+                    if state['mode'] == 'response':
+                        parts = content.split('\r\n\r\n', 1)
+                        body = parts[1] if len(parts) > 1 else content
+                    else:
+                        body = content
+                    f = File.createTempFile("intruder2get_preview", ".html")
+                    f.deleteOnExit()
+                    with open(f.getAbsolutePath(), 'w') as out:
+                        out.write(body)
+                    Desktop.getDesktop().browse(f.toURI())
+                except Exception as e:
+                    self._callbacks.printError("Open in browser failed: " + str(e))
+
+            popupMenu = JPopupMenu()
+            popupMenu.add(JMenuItem("Open in Browser", actionPerformed=lambda e: openInBrowser()))
+
+            class PopupListener(MouseAdapter):
+                def mousePressed(self, e):
+                    if e.isPopupTrigger():
+                        popupMenu.show(e.getComponent(), e.getX(), e.getY())
+                def mouseReleased(self, e):
+                    if e.isPopupTrigger():
+                        popupMenu.show(e.getComponent(), e.getX(), e.getY())
+
+            textPane.addMouseListener(PopupListener())
 
             searchPanel = JPanel(FlowLayout(FlowLayout.LEFT))
             searchPanel.add(JLabel("Search:"))
@@ -214,24 +244,16 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
         for i, payload in enumerate(self.payloads):
             req1 = baseStr1.replace(self.PAYLOAD_PLACEHOLDER, payload)
-
-            start1 = time.time()
             respStr1 = self._helpers.bytesToString(
                 self._callbacks.makeHttpRequest(self.selectedMessages[0].getHttpService(),
                                                 self._helpers.stringToBytes(req1)).getResponse())
-            end1 = time.time()
 
-            start2 = time.time()
             respStr2 = self._helpers.bytesToString(
                 self._callbacks.makeHttpRequest(self.selectedMessages[1].getHttpService(),
                                                 self._helpers.stringToBytes(request2)).getResponse())
-            end2 = time.time()
-
-            time1 = int((end1 - start1) * 1000)
-            time2 = int((end2 - start2) * 1000)
 
             self.results.append((payload, req1, respStr1, request2, respStr2))
-            self.tableModel.addRow([i + 1, payload, len(respStr1), len(respStr2), time1, time2])
+            self.tableModel.addRow([i + 1, payload, len(respStr1), len(respStr2)])
 
         self._callbacks.printOutput("Attack completed. %d payloads sent." % len(self.payloads))
 
